@@ -1,10 +1,11 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import StudentCode, LecturerCode, ManagerCode
+from core.models import StudentCode, LecturerCode, ManagerCode, Request
 from django.core.mail import send_mail
 from rest_framework.authtoken.models import Token
 import uuid
 import re
+import random
 
 # Отримуємо кастомну модель користувача
 User = get_user_model()
@@ -241,4 +242,61 @@ class LoginSerializer(serializers.Serializer):
                 "first_name": user.first_name,
                 "last_name": user.last_name
             }
+        }
+class RequestCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Request
+        fields = [
+            'id',
+            'name',
+            'type_request',
+            'description',
+            'photo',
+        ]
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        request = Request.objects.create(
+            user=user,
+            **validated_data  # без code — модель сама згенерує
+        )
+        return request
+
+class RequestDetailSerializer(serializers.ModelSerializer):
+    assigned_master = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Request
+        fields = [
+            'id',
+            'name',
+            'type_request',
+            'description',
+            'status',
+            'photo',
+            'created_at',
+            'assigned_master',
+        ]
+
+    def get_assigned_master(self, obj):
+        user = self.context['request'].user
+        visible_statuses = ['in_progress', 'done']  # або ['in_progress', 'completed'], якщо використовуєш таке значення
+
+        # Показати завжди менеджеру
+        if user.role == 'manager':
+            return self._get_master_block(obj)
+
+        # Показати користувачу тільки коли заявка в дозволеному статусі
+        if obj.status in visible_statuses:
+            return self._get_master_block(obj)
+
+        # Інакше не показувати
+        return None
+
+    def _get_master_block(self, obj):
+        return {
+            "name": obj.assigned_master_name,
+            "company": obj.assigned_master_company,
+            "phone": obj.assigned_master_phone,
+            "company_phone": obj.assigned_company_phone
         }

@@ -2,24 +2,32 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
 from django.conf import settings
+import random
+from django.utils import timezone
 
 
+
+# Менеджер користувачів для кастомної моделі User
 class CustomUserManager(BaseUserManager):
-    use_in_migrations = True
+    use_in_migrations = True  # Дозволяє використовувати менеджер у міграціях
 
+    # Створення звичайного користувача
     def create_user(self, email, password=None, **extra_fields):
         if not email:
-            raise ValueError('Email обовʼязковий')
-        email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
-        user.set_password(password)
-        user.save(using=self._db)
+            raise ValueError('Email обовʼязковий')  # Перевірка, що email заданий
+        email = self.normalize_email(email)  # Нормалізує email (нижній регістр тощо)
+        user = self.model(email=email, **extra_fields)  # Створює екземпляр користувача
+        user.set_password(password)  # Хешує пароль
+        user.save(using=self._db)  # Зберігає в базу даних
         return user
 
+    # Створення суперкористувача
     def create_superuser(self, email, password=None, **extra_fields):
+        # Примусово виставляємо прапорці для адміндоступу
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
 
+        # Перевіряємо, чи прапорці дійсно виставлені
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser повинен мати is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
@@ -28,16 +36,18 @@ class CustomUserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 
+# Основна модель користувача, яка замінює стандартну модель User у Django
 class User(AbstractUser):
-    # Прибрати username — не обов'язково, але можна замінити логіку
-    username = None
+    username = None  # Вимикаємо стандартне поле username
 
-    email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=50, blank=True)
+    # Основні дані користувача
+    email = models.EmailField(unique=True)  # Email стає основним логіном
+    phone = models.CharField(max_length=50, blank=True)  # Номер телефону (необов'язковий)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    patronymic = models.CharField(max_length=50, blank=True)
+    patronymic = models.CharField(max_length=50, blank=True)  # По-батькові (необов'язкове)
 
+    # Вибір ролі користувача
     ROLE_CHOICES = [
         ('student', 'Студент'),
         ('lecturer', 'Викладач'),
@@ -45,16 +55,23 @@ class User(AbstractUser):
     ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
 
+    # Вказуємо свій менеджер
     objects = CustomUserManager()
 
-    USERNAME_FIELD = 'email'  # ключ для логіну
-    REQUIRED_FIELDS = ['first_name', 'last_name', 'role']  # потрібні при createsuperuser
+    # Поле, яке буде використовуватись для логіну
+    USERNAME_FIELD = 'email'
+
+    # Поля, обовʼязкові при створенні суперкористувача через createsuperuser
+    REQUIRED_FIELDS = ['first_name', 'last_name', 'role']
 
     def __str__(self):
-        return f'{self.email} ({self.role})'
+        return f'{self.email} ({self.role})'  # Як користувач буде відображатись у Django-адмінці
 
 
+
+# Модель заявки від користувача (на ремонт тощо)
 class Request(models.Model):
+    # Типи заявок
     TYPE_CHOICES = [
         ('electrical_appliances', 'Електроприлади'),
         ('electricity', 'Електрика'),
@@ -67,28 +84,62 @@ class Request(models.Model):
         ('other', 'Інше'),
     ]
 
+    # Стани обробки заявки
     STATUS_CHOICES = [
         ('pending', 'В обробці'),
         ('approved', 'Підтверджено'),
         ('rejected', 'Відхилено'),
         ('done', 'Виконано'),
         ('on_check', 'На перевірці'),
+        ('empty', 'Чернетка'),
     ]
 
-    name = models.CharField(max_length=255)
-    type_request = models.CharField(max_length=50, choices=TYPE_CHOICES)
-    description = models.TextField()
-    photo = models.ImageField(upload_to='photos/', blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='requests')
+    name = models.CharField(max_length=255)  # Назва заявки
+    type_request = models.CharField(max_length=50, choices=TYPE_CHOICES)  # Тип заявки
+    description = models.TextField()  # Детальний опис проблеми
+    photo = models.ImageField(upload_to='photos/', blank=True, null=True)  # Фото, необов'язково
+    created_at = models.DateTimeField(auto_now_add=True)  # Дата створення
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')# Статус
+    code = models.CharField(max_length=4, blank=True, null=True)
+    assigned_master_name = models.CharField(max_length=100, blank=True, null=True)
+    assigned_master_company = models.CharField(max_length=100, blank=True, null=True)
+    assigned_master_phone = models.CharField(max_length=20, blank=True, null=True)
+    assigned_company_phone = models.CharField(max_length=20, blank=True, null=True)
+    user_confirmed = models.BooleanField(default=False)
+    manager_confirmed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(blank=True, null=True)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='requests'
+    )  # Хто створив заявку
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            while True:
+                generated_code = str(random.randint(1000, 9999))
+                if not Request.objects.filter(code=generated_code).exists():
+                    self.code = generated_code
+                    break
+
+        # Перевірка переходу в статус "done" (або "completed" — залежить від поля)
+        if self.status == 'done' and self.completed_at is None:
+            self.completed_at = timezone.now()
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} ({self.get_type_request_display()}) - {self.status}"
+        # Повертає тип заявки та статус у зручному вигляді
 
 
+
+# Модель студентського коду для попередньої перевірки під час реєстрації
 class StudentCode(models.Model):
+    # Вибір факультету (для автоматичного заповнення)
     FACULTY_CHOICES = [
+        # Кожен варіант дублюється в парі (ключ = відображення)
         ('Автомобілів', 'Автомобілів'),
         ('Виробництва, ремонту та матеріалознавства', 'Виробництва, ремонту та матеріалознавства'),
         ('Вищої математики', 'Вищої математики'),
@@ -124,18 +175,22 @@ class StudentCode(models.Model):
         ('Фінанси, облік і аудит', 'Фінанси, облік і аудит'),
     ]
 
-    code = models.CharField(max_length=20, unique=True)
+    # Поля, які заповнює система або вручну користувач
+    code = models.CharField(max_length=20, unique=True)  # Унікальний реєстраційний код
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     patronymic = models.CharField(max_length=50)
-    faculty = models.CharField(max_length=200, choices=FACULTY_CHOICES)
-    group = models.CharField(max_length=50)
+    faculty = models.CharField(max_length=200, choices=FACULTY_CHOICES)  # Назва кафедри / факультету
+    group = models.CharField(max_length=50)  # Номер навчальної групи
 
     def __str__(self):
-        return f"{self.code} — {self.last_name} {self.first_name}"
+        return f"{self.code} — {self.last_name} {self.first_name}"  # Як відображається в адмінці
 
 
+
+# 🔹 Модель коду викладача — використовується для підтвердження права на реєстрацію з роллю "lecturer"
 class LecturerCode(models.Model):
+    # Перелік посад для викладачів
     POSITION_CHOICES = [
         ('assistant', 'Асистент'),
         ('senior_lecturer', 'Старший викладач'),
@@ -144,17 +199,21 @@ class LecturerCode(models.Model):
         ('head_of_department', 'Завідувач кафедри'),
     ]
 
-    code = models.CharField(max_length=20, unique=True)
-    first_name = models.CharField(max_length=50)
-    last_name = models.CharField(max_length=50)
-    patronymic = models.CharField(max_length=50)
-    job_position = models.CharField(max_length=50, choices=POSITION_CHOICES)
+    code = models.CharField(max_length=20, unique=True)  # Унікальний код для реєстрації викладача
+    first_name = models.CharField(max_length=50)         # Імʼя
+    last_name = models.CharField(max_length=50)          # Прізвище
+    patronymic = models.CharField(max_length=50)         # По-батькові
+    job_position = models.CharField(max_length=50, choices=POSITION_CHOICES)  # Посада з обмеженого списку
 
     def __str__(self):
+        # Відображення запису в адмінці — зручно для перегляду
         return f"{self.code} — {self.last_name} {self.first_name}"
 
 
+
+# 🔹 Модель коду менеджера — використовується для підтвердження права на реєстрацію з роллю "manager"
 class ManagerCode(models.Model):
+    # Ті самі посади, що і для викладача — може бути переглянуто пізніше, якщо будуть відмінності
     POSITION_CHOICES = [
         ('assistant', 'Асистент'),
         ('senior_lecturer', 'Старший викладач'),
@@ -163,11 +222,13 @@ class ManagerCode(models.Model):
         ('head_of_department', 'Завідувач кафедри'),
     ]
 
-    code = models.CharField(max_length=20, unique=True)
-    first_name = models.CharField(max_length=50)
-    last_name = models.CharField(max_length=50)
-    patronymic = models.CharField(max_length=50)
-    job_position = models.CharField(max_length=50, choices=POSITION_CHOICES)
+    code = models.CharField(max_length=20, unique=True)  # Унікальний реєстраційний код
+    first_name = models.CharField(max_length=50)         # Імʼя
+    last_name = models.CharField(max_length=50)          # Прізвище
+    patronymic = models.CharField(max_length=50)         # По батькові
+    job_position = models.CharField(max_length=50, choices=POSITION_CHOICES)  # Посада
 
     def __str__(self):
+        # Відображення у списку моделей (наприклад, у Django Admin)
         return f"{self.code} — {self.last_name} {self.first_name}"
+

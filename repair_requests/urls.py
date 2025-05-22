@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
-from core.views import RegisterAPIView
+from core.views import RegisterAPIView, RequestCreateView
 from core.views import VerifyCodeView
 from core.views import LoginUserView
 
@@ -28,6 +28,7 @@ urlpatterns = [
     path('api/verify-code/', VerifyCodeView.as_view(), name='verify-code'),
     path('api/register/', RegisterAPIView.as_view(), name='register'),
     path('api/login/', LoginUserView.as_view(), name='login'),
+    path('api/requests/', RequestCreateView.as_view(), name='request-create'),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
