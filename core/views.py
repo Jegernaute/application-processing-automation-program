@@ -2,11 +2,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from core.serializers import RegisterSerializer
-from core.serializers import VerifyCodeSerializer
-from core.serializers import LoginSerializer
-from core.serializers import RequestCreateSerializer
+from rest_framework.generics import ListAPIView
+from core.serializers import RequestCreateSerializer,RequestDetailSerializer,LoginSerializer,VerifyCodeSerializer,RegisterSerializer
 from core.models import Request
+from core.permissions import IsStudentOrLecturer,IsManager
+from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.exceptions import PermissionDenied
+
+
 
 # 🔍 Ендпоінт для перевірки реєстраційного коду (без створення користувача)
 class VerifyCodeView(APIView):
@@ -66,7 +69,7 @@ class LoginUserView(APIView):
         return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
 
 class RequestCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsStudentOrLecturer]
 
     def post(self, request):
         serializer = RequestCreateSerializer(data=request.data, context={'request': request})
@@ -78,3 +81,45 @@ class RequestCreateView(APIView):
                 "id": new_request.id
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SomeManagerOnlyView(APIView):
+    permission_classes = [IsAuthenticated, IsManager]
+
+class RequestListView(ListAPIView):
+    serializer_class = RequestDetailSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'manager':
+            return Request.objects.all()
+        return Request.objects.filter(user=user)
+
+class RequestUpdateView(RetrieveUpdateAPIView):
+    queryset = Request.objects.all()
+    serializer_class = RequestDetailSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_update(self, serializer):
+        request = self.request
+        user = request.user
+        instance = self.get_object()
+
+        # Менеджер може оновлювати будь-які поля
+        if user.role == 'manager':
+            serializer.save()
+            return
+
+        # Студент або викладач — лише свої заявки в статусі 'empty' або 'pending'
+        if instance.user != user:
+            raise PermissionDenied("Це не ваша заявка.")
+        if instance.status not in ['empty', 'pending']:
+            raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
+
+        # Заборонені поля
+        for field in ['assigned_master_name', 'assigned_master_company', 'assigned_master_phone', 'assigned_company_phone', 'status']:
+            if field in serializer.validated_data:
+                raise PermissionDenied(f"Недозволено змінювати поле {field}.")
+
+        serializer.save()

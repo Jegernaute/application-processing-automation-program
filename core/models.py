@@ -108,6 +108,7 @@ class Request(models.Model):
     user_confirmed = models.BooleanField(default=False)
     manager_confirmed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
