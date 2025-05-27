@@ -4,7 +4,7 @@ from django.contrib.auth.base_user import BaseUserManager
 from django.conf import settings
 import random
 from django.utils import timezone
-
+from datetime import timedelta
 
 
 # Менеджер користувачів для кастомної моделі User
@@ -105,6 +105,7 @@ class Request(models.Model):
     assigned_master_company = models.CharField(max_length=100, blank=True, null=True)
     assigned_master_phone = models.CharField(max_length=20, blank=True, null=True)
     assigned_company_phone = models.CharField(max_length=20, blank=True, null=True)
+    work_date = models.DateTimeField(null=True, blank=True)
     user_confirmed = models.BooleanField(default=False)
     manager_confirmed = models.BooleanField(default=False)
     completed_at = models.DateTimeField(blank=True, null=True)

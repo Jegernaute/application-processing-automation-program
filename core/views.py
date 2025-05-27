@@ -8,8 +8,9 @@ from core.models import Request
 from core.permissions import IsStudentOrLecturer,IsManager
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
-
-
+from django.utils import timezone
+from datetime import timedelta
+from django.core.mail import send_mail
 
 # 🔍 Ендпоінт для перевірки реєстраційного коду (без створення користувача)
 class VerifyCodeView(APIView):
@@ -105,21 +106,84 @@ class RequestUpdateView(RetrieveUpdateAPIView):
         request = self.request
         user = request.user
         instance = self.get_object()
+        validated_data = serializer.validated_data
 
-        # Менеджер може оновлювати будь-які поля
+
+        # 1. Менеджер
+
         if user.role == 'manager':
+
+            # Призначення майстра в статусі approved → автоматично переводимо в on_check
+            master_fields = [
+                "assigned_master_name",
+                "assigned_master_company",
+                "assigned_master_phone",
+                "assigned_company_phone",
+                "work_date"
+            ]
+            updating_master = any(field in validated_data for field in master_fields)
+
+            if updating_master:
+                if instance.status != 'approved':
+                    raise PermissionDenied("Призначати майстра можна лише в статусі 'approved'.")
+                validated_data['status'] = 'on_check'
+                serializer.save()
+                return
+
+            # Завершення заявки
+            if validated_data.get('status') == 'done':
+                if not instance.user_confirmed:
+                    work_date = instance.work_date
+                    if not work_date or timezone.now() < (work_date + timedelta(days=1)):
+                        raise PermissionDenied(
+                            "Неможливо завершити заявку: очікується підтвердження користувача або має пройти 1 день після дати візиту."
+                        )
+                validated_data['completed_at'] = timezone.now()
+
+                # Надсилання повідомлення користувачу
+                send_mail(
+                    subject="Заявка завершена",
+                    message=(
+                        f"Заявка була позначена як виконана. "
+                        f"Якщо у вас є питання або скарги — напишіть на пошту менеджера: {user.email} "
+                        f"протягом 30 днів після завершення."
+                    ),
+                    from_email=user.email,
+                    recipient_list=[instance.user.email],
+                    fail_silently=True
+                )
+
+                serializer.save()
+                return
+
+            # Інші зміни менеджера (напр., зміна статусу) — дозволені
             serializer.save()
             return
 
-        # Студент або викладач — лише свої заявки в статусі 'empty' або 'pending'
+
+        # 2. Студент / Викладач
         if instance.user != user:
             raise PermissionDenied("Це не ваша заявка.")
         if instance.status not in ['empty', 'pending']:
             raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
 
-        # Заборонені поля
-        for field in ['assigned_master_name', 'assigned_master_company', 'assigned_master_phone', 'assigned_company_phone', 'status']:
-            if field in serializer.validated_data:
+        # Користувач може лише підтвердити виконання
+        if validated_data.get('user_confirmed') is True and instance.status == 'on_check':
+            instance.user_confirmed = True
+            instance.save()
+            return
+
+        # Заборонені поля для користувача
+        forbidden_fields = [
+            'assigned_master_name',
+            'assigned_master_company',
+            'assigned_master_phone',
+            'assigned_company_phone',
+            'status',
+            'work_date'
+        ]
+        for field in forbidden_fields:
+            if field in validated_data:
                 raise PermissionDenied(f"Недозволено змінювати поле {field}.")
 
         serializer.save()
