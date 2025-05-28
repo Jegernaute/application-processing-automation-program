@@ -97,9 +97,11 @@ class Request(models.Model):
     name = models.CharField(max_length=255)  # Назва заявки
     type_request = models.CharField(max_length=50, choices=TYPE_CHOICES)  # Тип заявки
     description = models.TextField()  # Детальний опис проблеми
-    photo = models.ImageField(upload_to='photos/', blank=True, null=True)  # Фото, необов'язково
+    location_unit = models.ForeignKey('LocationUnit', on_delete=models.CASCADE, null=False)
+    room_number = models.CharField(max_length=20, null=True)
+    entrance_number = models.CharField(max_length=10, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)  # Дата створення
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')# Статус
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='empty')# Статус
     code = models.CharField(max_length=4, blank=True, null=True)
     assigned_master_name = models.CharField(max_length=100, blank=True, null=True)
     assigned_master_company = models.CharField(max_length=100, blank=True, null=True)
@@ -233,4 +235,28 @@ class ManagerCode(models.Model):
     def __str__(self):
         # Відображення у списку моделей (наприклад, у Django Admin)
         return f"{self.code} — {self.last_name} {self.first_name}"
+
+class RequestImage(models.Model):
+    request = models.ForeignKey('Request', on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(upload_to='requests/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image {self.id} for Request {self.request.id}"
+
+class LocationUnit(models.Model):
+    LOCATION_TYPE_CHOICES = [
+        ("university", "Університет"),
+        ("dormitory", "Гуртожиток"),
+    ]
+
+    name = models.CharField(max_length=100)  # Назва: Наприклад, "Корпус на Видубичах"
+    location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES)
+    street_name = models.CharField(max_length=100)
+    building_number = models.CharField(max_length=20)
+    comment = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} — {self.street_name} {self.building_number}"
 

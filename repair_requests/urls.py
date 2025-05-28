@@ -18,9 +18,11 @@ from django.contrib import admin
 from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
-from core.views import RegisterAPIView, RequestCreateView, RequestListView, RequestUpdateView
+from core.views import RegisterAPIView, RequestCreateView, RequestListView, RequestUpdateView, RequestImageListAPIView, \
+    RequestImageUploadAPIView, RequestImageDeleteAPIView
 from core.views import VerifyCodeView
 from core.views import LoginUserView
+
 
 
 urlpatterns = [
@@ -31,7 +33,9 @@ urlpatterns = [
     path('api/requests/', RequestCreateView.as_view(), name='request-create'),
     path('api/requests/list/', RequestListView.as_view(), name='request-list'),
     path('api/requests/<int:pk>/', RequestUpdateView.as_view(), name='request-update'),
-
+    path('api/requests/<int:pk>/images/', RequestImageListAPIView.as_view(), name='request-image-list'),
+    path('api/requests/<int:pk>/upload-image/', RequestImageUploadAPIView.as_view(), name='request-image-upload'),
+    path('api/request-images/<int:pk>/', RequestImageDeleteAPIView.as_view(), name='request-image-delete'),
 
 ]
 

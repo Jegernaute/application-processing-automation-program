@@ -1,10 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.generics import ListAPIView
-from core.serializers import RequestCreateSerializer,RequestDetailSerializer,LoginSerializer,VerifyCodeSerializer,RegisterSerializer
-from core.models import Request
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.generics import ListAPIView, get_object_or_404, CreateAPIView, DestroyAPIView
+from core.serializers import RequestCreateSerializer, RequestDetailSerializer, LoginSerializer, VerifyCodeSerializer, \
+    RegisterSerializer, RequestImageSerializer
+from core.models import Request, RequestImage
 from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
@@ -16,6 +17,8 @@ from core.services.request_status import can_set_done
 
 # 🔍 Ендпоінт для перевірки реєстраційного коду (без створення користувача)
 class VerifyCodeView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         # Прив'язуємо дані запиту до VerifyCodeSerializer
         serializer = VerifyCodeSerializer(data=request.data)
@@ -34,6 +37,8 @@ class VerifyCodeView(APIView):
 
 # 📝 Ендпоінт для реєстрації нового користувача
 class RegisterAPIView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         # Передаємо POST-дані у RegisterSerializer
         serializer = RegisterSerializer(data=request.data)
@@ -54,6 +59,8 @@ class RegisterAPIView(APIView):
 
 # 🔐 Ендпоінт для входу користувача (автентифікація)
 class LoginUserView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         # Передаємо email та code у LoginSerializer
         serializer = LoginSerializer(data=request.data)
@@ -109,6 +116,10 @@ class RequestListView(ListAPIView):
             queryset = queryset.filter(status=status)
 
         return queryset
+
+    def get_serializer_context(self):
+        return {'request': self.request}
+
 
 
 class RequestUpdateView(RetrieveUpdateAPIView):
@@ -199,3 +210,51 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 raise PermissionDenied(f"Недозволено змінювати поле {field}.")
 
         serializer.save()
+
+class RequestImageListAPIView(ListAPIView):
+    serializer_class = RequestImageSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_queryset(self):
+        request_id = self.kwargs['pk']
+        request_obj = get_object_or_404(Request, pk=request_id)
+        self.check_object_permissions(self.request, request_obj)
+        return RequestImage.objects.filter(request=request_obj)
+
+class RequestImageUploadAPIView(CreateAPIView):
+    serializer_class = RequestImageSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def perform_create(self, serializer):
+        request_id = self.kwargs['pk']
+        request_obj = get_object_or_404(Request, pk=request_id)
+        self.check_object_permissions(self.request, request_obj)
+
+        # Обмеження на кількість фото (макс. 5)
+        if RequestImage.objects.filter(request=request_obj).count() >= 5:
+            raise PermissionDenied("Не можна прикріпити більше 5 фото до заявки.")
+
+        serializer.save(request=request_obj)
+
+    def post(self, request, pk):
+        req = get_object_or_404(Request, pk=pk)
+
+        # Перевірка кількості фото
+        if RequestImage.objects.filter(request=req).count() >= 5:
+            return Response({"error": "Можна додати максимум 5 зображень до заявки."}, status=400)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(request=req)
+        return Response(serializer.data, status=201)
+
+
+class RequestImageDeleteAPIView(DestroyAPIView):
+    queryset = RequestImage.objects.all()
+    serializer_class = RequestImageSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_object(self):
+        obj = super().get_object()
+        self.check_object_permissions(self.request, obj.request)
+        return obj

@@ -1,6 +1,8 @@
+import os
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import StudentCode, LecturerCode, ManagerCode, Request
+from core.models import StudentCode, LecturerCode, ManagerCode, Request, RequestImage,LocationUnit
 from django.core.mail import send_mail
 from rest_framework.authtoken.models import Token
 import uuid
@@ -252,7 +254,6 @@ class RequestCreateSerializer(serializers.ModelSerializer):
             'name',
             'type_request',
             'description',
-            'photo',
         ]
 
     def create(self, validated_data):
@@ -263,8 +264,24 @@ class RequestCreateSerializer(serializers.ModelSerializer):
         )
         return request
 
+    def validate(self, attrs):
+        location_unit = attrs.get("location_unit")
+        entrance_number = attrs.get("entrance_number")
+
+        if location_unit.location_type == "dormitory" and not entrance_number:
+            raise serializers.ValidationError("Для гуртожитку потрібно вказати номер під'їзду.")
+
+        return attrs
+
+
+class LocationUnitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LocationUnit
+        fields = ['id', 'name', 'location_type', 'street_name', 'building_number', 'comment']
+
 class RequestDetailSerializer(serializers.ModelSerializer):
     assigned_master = serializers.SerializerMethodField()
+    location_unit = LocationUnitSerializer(read_only=True)
 
     class Meta:
         model = Request
@@ -274,9 +291,12 @@ class RequestDetailSerializer(serializers.ModelSerializer):
             'type_request',
             'description',
             'status',
-            'photo',
             'created_at',
             'assigned_master',
+            'images',
+            'location_unit',
+            'room_number',
+            'entrance_number'
         ]
 
     def get_assigned_master(self, obj):
@@ -301,3 +321,22 @@ class RequestDetailSerializer(serializers.ModelSerializer):
             "phone": obj.assigned_master_phone,
             "company_phone": obj.assigned_company_phone
         }
+class RequestImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RequestImage
+        fields = ['id', 'image', 'uploaded_at', 'request']
+        read_only_fields = ['id', 'uploaded_at', 'request']
+
+    def validate_image(self, image):
+        # 1. Перевірка формату
+        valid_extensions = ['.jpg', '.jpeg', '.png']
+        ext = os.path.splitext(image.name)[1].lower()
+        if ext not in valid_extensions:
+            raise serializers.ValidationError("Формат файлу має бути .jpg, .jpeg або .png")
+
+        # 2. Перевірка розміру
+        if image.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Максимальний розмір зображення — 5 МБ")
+
+        return image
+
