@@ -162,7 +162,7 @@ class RegisterSerializer(serializers.Serializer):
 
 
 
-# 🔧 ФУНКЦІЯ НОРМАЛІЗАЦІЇ НОМЕРА ТЕЛЕФОНУ
+#  ФУНКЦІЯ НОРМАЛІЗАЦІЇ НОМЕРА ТЕЛЕФОНУ
 def normalize_phone(phone: str) -> str:
     # Видаляє всі символи, крім цифр і плюса ("+")
     phone = re.sub(r"[^\d+]", "", phone)
@@ -191,7 +191,7 @@ def normalize_phone(phone: str) -> str:
     return phone
 
 
-# 🔐 СЕРІАЛІЗАТОР ДЛЯ ЛОГІНУ КОРИСТУВАЧА (ПО EMAIL І КОДУ)
+#  СЕРІАЛІЗАТОР ДЛЯ ЛОГІНУ КОРИСТУВАЧА (ПО EMAIL І КОДУ)
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()     # Поле email
     code = serializers.CharField()       # Код перевірки ролі
@@ -243,6 +243,7 @@ class LoginSerializer(serializers.Serializer):
                 "last_name": user.last_name
             }
         }
+
 class RequestCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Request
@@ -284,16 +285,16 @@ class RequestDetailSerializer(serializers.ModelSerializer):
 
         # Показати завжди менеджеру
         if user.role == 'manager':
-            return self._get_master_block(obj)
+            return self.get_master_block(obj)
 
         # Показати користувачу тільки коли заявка в дозволеному статусі
         if obj.status in visible_statuses:
-            return self._get_master_block(obj)
+            return self.get_master_block(obj)
 
         # Інакше не показувати
         return None
 
-    def _get_master_block(self, obj):
+    def get_master_block(self, obj):
         return {
             "name": obj.assigned_master_name,
             "company": obj.assigned_master_company,

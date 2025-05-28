@@ -5,12 +5,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.generics import ListAPIView
 from core.serializers import RequestCreateSerializer,RequestDetailSerializer,LoginSerializer,VerifyCodeSerializer,RegisterSerializer
 from core.models import Request
-from core.permissions import IsStudentOrLecturer,IsManager
+from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
 from datetime import timedelta
 from django.core.mail import send_mail
+from core.services.request_status import can_set_done
+
 
 # 🔍 Ендпоінт для перевірки реєстраційного коду (без створення користувача)
 class VerifyCodeView(APIView):
@@ -93,14 +95,27 @@ class RequestListView(ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        if user.role == 'manager':
-            return Request.objects.all()
-        return Request.objects.filter(user=user)
+
+        # Користувач бачить тільки свої заявки
+        if user.role in ["student", "lecturer"]:
+            return Request.objects.filter(user=user)
+
+        # Менеджер бачить усі заявки
+        queryset = Request.objects.all()
+
+        # Якщо передано фільтр статусу — застосувати його
+        status = self.request.query_params.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
+
+        return queryset
+
 
 class RequestUpdateView(RetrieveUpdateAPIView):
     queryset = Request.objects.all()
     serializer_class = RequestDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
 
     def perform_update(self, serializer):
         request = self.request
@@ -132,15 +147,12 @@ class RequestUpdateView(RetrieveUpdateAPIView):
 
             # Завершення заявки
             if validated_data.get('status') == 'done':
-                if not instance.user_confirmed:
-                    work_date = instance.work_date
-                    if not work_date or timezone.now() < (work_date + timedelta(days=1)):
-                        raise PermissionDenied(
-                            "Неможливо завершити заявку: очікується підтвердження користувача або має пройти 1 день після дати візиту."
-                        )
+                can_complete, reason = can_set_done(instance)
+                if not can_complete:
+                    raise PermissionDenied(reason)
+
                 validated_data['completed_at'] = timezone.now()
 
-                # Надсилання повідомлення користувачу
                 send_mail(
                     subject="Заявка завершена",
                     message=(
