@@ -254,6 +254,9 @@ class RequestCreateSerializer(serializers.ModelSerializer):
             'name',
             'type_request',
             'description',
+            'location_unit',
+            'room_number',
+            'entrance_number'
         ]
 
     def create(self, validated_data):
@@ -265,11 +268,40 @@ class RequestCreateSerializer(serializers.ModelSerializer):
         return request
 
     def validate(self, attrs):
+        user = self.context['request'].user
         location_unit = attrs.get("location_unit")
-        entrance_number = attrs.get("entrance_number")
+        entrance = attrs.get("entrance_number")
+        name = attrs.get("name")
+        description = attrs.get("description")
+        room_number = attrs.get("room_number")
 
-        if location_unit.location_type == "dormitory" and not entrance_number:
+        if not location_unit:
+            raise serializers.ValidationError("Поле 'location_unit' є обов'язковим.")
+
+        # Якщо прийшов ID, а не об'єкт, треба вручну отримати з бази
+        if isinstance(location_unit, int):
+            try:
+                location_unit = LocationUnit.objects.get(id=location_unit)
+            except LocationUnit.DoesNotExist:
+                raise serializers.ValidationError("Вказано неіснуючу локацію.")
+
+        # Валідація під'їзду
+        if location_unit.location_type == "dormitory" and not entrance:
             raise serializers.ValidationError("Для гуртожитку потрібно вказати номер під'їзду.")
+        if location_unit.location_type == "university" and entrance:
+            raise serializers.ValidationError("Для університету не потрібно вказувати під'їзд.")
+
+        #  Перевірка на дублікат
+        duplicate = Request.objects.filter(
+            user=user,
+            name=name,
+            description=description,
+            location_unit=location_unit,
+            room_number=room_number,
+            status__in=["empty", "pending", "approved", "on_check"]
+        )
+        if duplicate.exists():
+            raise serializers.ValidationError("Схожа заявка вже існує та ще не завершена.")
 
         return attrs
 
