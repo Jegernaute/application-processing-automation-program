@@ -315,6 +315,12 @@ class RequestDetailSerializer(serializers.ModelSerializer):
     assigned_master = serializers.SerializerMethodField()
     location_unit = LocationUnitSerializer(read_only=True)
 
+    assigned_master_name = serializers.CharField(required=False)
+    assigned_master_company = serializers.CharField(required=False)
+    assigned_master_phone = serializers.CharField(required=False)
+    assigned_company_phone = serializers.CharField(required=False)
+    work_date = serializers.DateTimeField(required=False)
+
     class Meta:
         model = Request
         fields = [
@@ -325,6 +331,11 @@ class RequestDetailSerializer(serializers.ModelSerializer):
             'status',
             'created_at',
             'assigned_master',
+            'assigned_master_name',
+            'assigned_master_company',
+            'assigned_master_phone',
+            'assigned_company_phone',
+            'work_date',
             'images',
             'location_unit',
             'room_number',

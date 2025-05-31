@@ -13,6 +13,14 @@ from django.utils import timezone
 from datetime import timedelta
 from django.core.mail import send_mail
 from core.services.request_status import can_set_done
+from core.services.notifications import (
+    send_status_email,
+    render_request_completed_message,
+    render_request_rejected_message,
+    render_request_approved_message,
+    render_request_restored_message
+)
+
 
 
 # 🔍 Ендпоінт для перевірки реєстраційного коду (без створення користувача)
@@ -173,11 +181,47 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                     ),
                     from_email=user.email,
                     recipient_list=[instance.user.email],
-                    fail_silently=True
+                    fail_silently=False
                 )
 
                 serializer.save()
                 return
+
+            if validated_data.get("status") == "done" and not instance.user_confirmed:
+                manager_email = request.user.email
+                message = render_request_completed_message(instance, manager_email)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Заявка завершена",
+                    message=message
+                )
+
+            if validated_data.get("status") == "rejected":
+                message = render_request_rejected_message(instance)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Заявку відхилено",
+                    message=message
+                )
+
+            if validated_data.get("status") == "approved":
+                message = render_request_approved_message(instance)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Заявка схвалена",
+                    message=message
+                )
+
+            old_status = instance.status
+            new_status = validated_data.get("status")
+
+            if old_status == "done" and new_status == "approved":
+                msg = render_request_restored_message(instance)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Заявку відновлено",
+                    message=msg
+                )
 
             # Інші зміни менеджера (напр., зміна статусу) — дозволені
             serializer.save()

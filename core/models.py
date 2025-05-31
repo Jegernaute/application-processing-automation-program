@@ -90,7 +90,7 @@ class Request(models.Model):
         ('approved', 'Підтверджено'),
         ('rejected', 'Відхилено'),
         ('done', 'Виконано'),
-        ('on_check', 'На перевірці'),
+        ('on_check', 'В роботі'),
         ('empty', 'Чернетка'),
     ]
 
