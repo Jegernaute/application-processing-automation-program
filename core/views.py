@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import ListAPIView, get_object_or_404, CreateAPIView, DestroyAPIView
 from core.serializers import RequestCreateSerializer, RequestDetailSerializer, LoginSerializer, VerifyCodeSerializer, \
-    RegisterSerializer, RequestImageSerializer
+    RegisterSerializer, RequestImageSerializer, UserProfileSerializer
 from core.models import Request, RequestImage
 from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
 from rest_framework.generics import RetrieveUpdateAPIView
@@ -18,7 +18,6 @@ from core.services.notifications import (
     render_request_approved_message,
     render_request_restored_message, render_master_assigned_message, render_user_confirmed_message
 )
-from core import models
 from django.db.models import Q
 
 
@@ -338,3 +337,25 @@ class RequestImageDeleteAPIView(DestroyAPIView):
         obj = super().get_object()
         self.check_object_permissions(self.request, obj.request)
         return obj
+
+class UserProfileView(RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserProfileSerializer
+
+    def get_object(self):
+        return self.request.user
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        # Деактивація акаунта
+        user.is_active = False
+        user.save()
+
+        # Видалення токена
+        user.auth_token.delete()
+
+        return Response({"message": "Користувача деактивовано та токен видалено."}, status=status.HTTP_200_OK)

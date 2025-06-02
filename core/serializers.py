@@ -389,3 +389,31 @@ class RequestImageSerializer(serializers.ModelSerializer):
 
         return image
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            'email',
+            'phone',
+            'first_name',
+            'last_name',
+            'patronymic',
+            'role',
+        ]
+        read_only_fields = ['first_name', 'last_name', 'patronymic', 'role']
+
+    def validate_email(self, value):
+        user = self.instance
+        if User.objects.exclude(pk=user.pk).filter(email=value).exists():
+            raise serializers.ValidationError("Користувач із такою поштою вже існує.")
+        return value
+
+    def validate_phone(self, value):
+        value = normalize_phone(value)
+        user = self.instance
+        if User.objects.exclude(pk=user.pk).filter(phone=value).exists():
+            raise serializers.ValidationError("Користувач із таким номером телефону вже існує.")
+        return value
+
+
+

@@ -19,7 +19,7 @@ from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
 from core.views import RegisterAPIView, RequestCreateView, RequestListView, RequestUpdateView, RequestImageListAPIView, \
-    RequestImageUploadAPIView, RequestImageDeleteAPIView
+    RequestImageUploadAPIView, RequestImageDeleteAPIView, UserProfileView, LogoutView
 from core.views import VerifyCodeView
 from core.views import LoginUserView
 
@@ -36,6 +36,8 @@ urlpatterns = [
     path('api/requests/<int:pk>/images/', RequestImageListAPIView.as_view(), name='request-image-list'),
     path('api/requests/<int:pk>/upload-image/', RequestImageUploadAPIView.as_view(), name='request-image-upload'),
     path('api/request-images/<int:pk>/', RequestImageDeleteAPIView.as_view(), name='request-image-delete'),
+    path('api/profile/', UserProfileView.as_view(), name="user-profile"),
+    path('api/logout/', LogoutView.as_view(), name='logout'),
 
 ]
 
