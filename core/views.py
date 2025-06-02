@@ -18,6 +18,8 @@ from core.services.notifications import (
     render_request_approved_message,
     render_request_restored_message, render_master_assigned_message, render_user_confirmed_message
 )
+from core import models
+from django.db.models import Q
 
 
 
@@ -111,15 +113,41 @@ class RequestListView(ListAPIView):
 
         # Користувач бачить тільки свої заявки
         if user.role in ["student", "lecturer"]:
-            return Request.objects.filter(user=user)
+            qs = Request.objects.filter(user=user)
 
-        # Менеджер бачить усі заявки
-        queryset = Request.objects.all()
+            # Отримуємо GET-параметри
+            query = self.request.query_params.get("query")
+            status = self.request.query_params.get("status")
+            type_request = self.request.query_params.get("type_request")
 
-        # Якщо передано фільтр статусу — застосувати його
-        status = self.request.query_params.get("status")
-        if status:
-            queryset = queryset.filter(status=status)
+            # Пошук по назві або коду
+            if query:
+                qs = qs.filter(Q(name__icontains=query) | Q(code__icontains=query))
+
+            # Фільтр по статусу
+            if status:
+                qs = qs.filter(status=status)
+
+            # Фільтр по типу заявки
+            if type_request:
+                qs = qs.filter(type_request=type_request)
+
+            return qs
+
+        # Менеджер бачить усі заявки, крім чернеток і відхилених
+        queryset = Request.objects.exclude(status__in=["empty", "rejected"])
+
+        # Параметри фільтрації
+        query = self.request.query_params.get("query")
+        type_request = self.request.query_params.get("type_request")
+
+        # Пошук за назвою або кодом
+        if query:
+            queryset = queryset.filter(Q(name__icontains=query) | Q(code__icontains=query))
+
+        # Фільтр по типу заявки
+        if type_request:
+            queryset = queryset.filter(type_request=type_request)
 
         return queryset
 

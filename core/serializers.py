@@ -329,6 +329,7 @@ class RequestDetailSerializer(serializers.ModelSerializer):
         model = Request
         fields = [
             'id',
+            'code',
             'name',
             'type_request',
             'description',
