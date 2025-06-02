@@ -74,6 +74,10 @@ class RegisterSerializer(serializers.Serializer):
         if User.objects.filter(email=email).exists():
             raise serializers.ValidationError({"email": "Користувач із цією поштою вже існує."})
 
+        # Перевірка унікальності телефону
+        if User.objects.filter(phone=phone).exists():
+            raise serializers.ValidationError({"phone": "Користувач із таким номером телефону вже існує."})
+
         # Початкові змінні
         role = None
         profile_data = {}
@@ -314,7 +318,7 @@ class LocationUnitSerializer(serializers.ModelSerializer):
 class RequestDetailSerializer(serializers.ModelSerializer):
     assigned_master = serializers.SerializerMethodField()
     location_unit = LocationUnitSerializer(read_only=True)
-
+    user_confirmed = serializers.BooleanField(required=False)
     assigned_master_name = serializers.CharField(required=False)
     assigned_master_company = serializers.CharField(required=False)
     assigned_master_phone = serializers.CharField(required=False)
@@ -339,7 +343,8 @@ class RequestDetailSerializer(serializers.ModelSerializer):
             'images',
             'location_unit',
             'room_number',
-            'entrance_number'
+            'entrance_number',
+            'user_confirmed',
         ]
 
     def get_assigned_master(self, obj):

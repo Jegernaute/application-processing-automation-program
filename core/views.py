@@ -10,15 +10,13 @@ from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
-from datetime import timedelta
-from django.core.mail import send_mail
 from core.services.request_status import can_set_done
 from core.services.notifications import (
     send_status_email,
     render_request_completed_message,
     render_request_rejected_message,
     render_request_approved_message,
-    render_request_restored_message
+    render_request_restored_message, render_master_assigned_message, render_user_confirmed_message
 )
 
 
@@ -43,7 +41,7 @@ class VerifyCodeView(APIView):
         return Response(serializer.errors, status=status.HTTP_404_NOT_FOUND)
 
 
-# 📝 Ендпоінт для реєстрації нового користувача
+#  Ендпоінт для реєстрації нового користувача
 class RegisterAPIView(APIView):
     permission_classes = [AllowAny]
 
@@ -65,7 +63,7 @@ class RegisterAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# 🔐 Ендпоінт для входу користувача (автентифікація)
+#  Ендпоінт для входу користувача (автентифікація)
 class LoginUserView(APIView):
     permission_classes = [AllowAny]
 
@@ -135,19 +133,16 @@ class RequestUpdateView(RetrieveUpdateAPIView):
     serializer_class = RequestDetailSerializer
     permission_classes = [IsAuthenticated, IsOwnerOrManager]
 
-
     def perform_update(self, serializer):
         request = self.request
         user = request.user
         instance = self.get_object()
         validated_data = serializer.validated_data
 
-
-        # 1. Менеджер
-
+        # -------------------------
+        #  Менеджер
+        # -------------------------
         if user.role == 'manager':
-
-            # Призначення майстра в статусі approved → автоматично переводимо в on_check
             master_fields = [
                 "assigned_master_name",
                 "assigned_master_company",
@@ -157,64 +152,58 @@ class RequestUpdateView(RetrieveUpdateAPIView):
             ]
             updating_master = any(field in validated_data for field in master_fields)
 
+            #  Призначення майстра → статус on_check + email
             if updating_master:
                 if instance.status != 'approved':
                     raise PermissionDenied("Призначати майстра можна лише в статусі 'approved'.")
                 validated_data['status'] = 'on_check'
                 serializer.save()
+
+                msg = render_master_assigned_message(instance)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Майстра призначено",
+                    message=msg
+                )
                 return
 
-            # Завершення заявки
-            if validated_data.get('status') == 'done':
+            #  Завершення заявки
+            if validated_data.get("status") == "done":
                 can_complete, reason = can_set_done(instance)
                 if not can_complete:
                     raise PermissionDenied(reason)
 
                 validated_data['completed_at'] = timezone.now()
-
-                send_mail(
+                msg = render_request_completed_message(instance, manager_email=user.email)
+                send_status_email(
+                    to_email=instance.user.email,
                     subject="Заявка завершена",
-                    message=(
-                        f"Заявка була позначена як виконана. "
-                        f"Якщо у вас є питання або скарги — напишіть на пошту менеджера: {user.email} "
-                        f"протягом 30 днів після завершення."
-                    ),
-                    from_email=user.email,
-                    recipient_list=[instance.user.email],
-                    fail_silently=False
+                    message=msg
                 )
-
                 serializer.save()
                 return
 
-            if validated_data.get("status") == "done" and not instance.user_confirmed:
-                manager_email = request.user.email
-                message = render_request_completed_message(instance, manager_email)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявка завершена",
-                    message=message
-                )
-
+            #  Відхилення
             if validated_data.get("status") == "rejected":
-                message = render_request_rejected_message(instance)
+                msg = render_request_rejected_message(instance)
                 send_status_email(
                     to_email=instance.user.email,
                     subject="Заявку відхилено",
-                    message=message
+                    message=msg
                 )
 
+            #  Схвалення
             if validated_data.get("status") == "approved":
-                message = render_request_approved_message(instance)
+                msg = render_request_approved_message(instance)
                 send_status_email(
                     to_email=instance.user.email,
                     subject="Заявка схвалена",
-                    message=message
+                    message=msg
                 )
 
+            #  Відновлення з done → approved
             old_status = instance.status
             new_status = validated_data.get("status")
-
             if old_status == "done" and new_status == "approved":
                 msg = render_request_restored_message(instance)
                 send_status_email(
@@ -223,24 +212,42 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                     message=msg
                 )
 
-            # Інші зміни менеджера (напр., зміна статусу) — дозволені
             serializer.save()
             return
 
+        # -------------------------
+        #  Користувач (студент або викладач)
+        # -------------------------
+        if user.role not in ['student', 'lecturer']:
+            raise PermissionDenied("Тільки студент або викладач може редагувати свою заявку.")
 
-        # 2. Студент / Викладач
         if instance.user != user:
             raise PermissionDenied("Це не ваша заявка.")
+
+        #  Підтвердження користувачем (у статусі on_check)
+        if validated_data.get('user_confirmed') is True:
+            if instance.status == 'on_check':
+                if instance.work_date and timezone.now() < instance.work_date:
+                    raise PermissionDenied("Підтвердження можливе лише після завершення запланованого часу візиту.")
+
+                instance.user_confirmed = True
+                instance.save()
+
+                msg = render_user_confirmed_message(instance)
+                send_status_email(
+                    to_email=instance.user.email,
+                    subject="Заявка підтверджена користувачем",
+                    message=msg
+                )
+                return
+            else:
+                raise PermissionDenied("Підтвердити можна лише в статусі 'on_check'.")
+
+        #  Редагування дозволене лише в статусах чернетки
         if instance.status not in ['empty', 'pending']:
             raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
 
-        # Користувач може лише підтвердити виконання
-        if validated_data.get('user_confirmed') is True and instance.status == 'on_check':
-            instance.user_confirmed = True
-            instance.save()
-            return
-
-        # Заборонені поля для користувача
+        #  Заборонені поля для редагування користувачем
         forbidden_fields = [
             'assigned_master_name',
             'assigned_master_company',
@@ -254,6 +261,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 raise PermissionDenied(f"Недозволено змінювати поле {field}.")
 
         serializer.save()
+
 
 class RequestImageListAPIView(ListAPIView):
     serializer_class = RequestImageSerializer
