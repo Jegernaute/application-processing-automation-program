@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import ListAPIView, get_object_or_404, CreateAPIView, DestroyAPIView
 from core.serializers import RequestCreateSerializer, RequestDetailSerializer, LoginSerializer, VerifyCodeSerializer, \
     RegisterSerializer, RequestImageSerializer, UserProfileSerializer
-from core.models import Request, RequestImage
+from core.models import Request, RequestImage, User
 from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
@@ -116,7 +116,7 @@ class RequestListView(ListAPIView):
 
             # Отримуємо GET-параметри
             query = self.request.query_params.get("query")
-            status = self.request.query_params.get("status")
+            status_param = self.request.query_params.get("status")
             type_request = self.request.query_params.get("type_request")
 
             # Пошук по назві або коду
@@ -125,7 +125,7 @@ class RequestListView(ListAPIView):
 
             # Фільтр по статусу
             if status:
-                qs = qs.filter(status=status)
+                qs = qs.filter(status=status_param)
 
             # Фільтр по типу заявки
             if type_request:
@@ -139,6 +139,7 @@ class RequestListView(ListAPIView):
         # Параметри фільтрації
         query = self.request.query_params.get("query")
         type_request = self.request.query_params.get("type_request")
+        status_param = self.request.query_params.get("status")
 
         # Пошук за назвою або кодом
         if query:
@@ -147,6 +148,10 @@ class RequestListView(ListAPIView):
         # Фільтр по типу заявки
         if type_request:
             queryset = queryset.filter(type_request=type_request)
+
+        # Фільтр по статусу
+        if status_param:
+            queryset = queryset.filter(status=status_param)
 
         return queryset
 
@@ -212,11 +217,15 @@ class RequestUpdateView(RetrieveUpdateAPIView):
 
             #  Відхилення
             if validated_data.get("status") == "rejected":
-                msg = render_request_rejected_message(instance)
+                reason = request.data.get("reason", "не вказана")  # отримаємо причину з запиту
+                message = (
+                    f"Заявку №{instance.code} відхилено.\n"
+                    f"Причина: {reason}."
+                )
                 send_status_email(
                     to_email=instance.user.email,
                     subject="Заявку відхилено",
-                    message=msg
+                    message=message
                 )
 
             #  Схвалення
@@ -251,6 +260,23 @@ class RequestUpdateView(RetrieveUpdateAPIView):
         if instance.user != user:
             raise PermissionDenied("Це не ваша заявка.")
 
+        #  Редагування дозволене лише в статусах чернетки
+        if instance.status not in ['empty', 'pending']:
+            raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
+
+        #  Заборонені поля для редагування користувачем
+        forbidden_fields = [
+            'assigned_master_name',
+            'assigned_master_company',
+            'assigned_master_phone',
+            'assigned_company_phone',
+            'status',
+            'work_date',
+        ]
+        for field in forbidden_fields:
+            if field in validated_data:
+                raise PermissionDenied(f"Недозволено змінювати поле {field}.")
+
         #  Підтвердження користувачем (у статусі on_check)
         if validated_data.get('user_confirmed') is True:
             if instance.status == 'on_check':
@@ -269,23 +295,6 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 return
             else:
                 raise PermissionDenied("Підтвердити можна лише в статусі 'on_check'.")
-
-        #  Редагування дозволене лише в статусах чернетки
-        if instance.status not in ['empty', 'pending']:
-            raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
-
-        #  Заборонені поля для редагування користувачем
-        forbidden_fields = [
-            'assigned_master_name',
-            'assigned_master_company',
-            'assigned_master_phone',
-            'assigned_company_phone',
-            'status',
-            'work_date'
-        ]
-        for field in forbidden_fields:
-            if field in validated_data:
-                raise PermissionDenied(f"Недозволено змінювати поле {field}.")
 
         serializer.save()
 
@@ -337,6 +346,43 @@ class RequestImageDeleteAPIView(DestroyAPIView):
         obj = super().get_object()
         self.check_object_permissions(self.request, obj.request)
         return obj
+
+class SubmitRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        # 1. Отримати заявку або 404
+        request_obj = get_object_or_404(Request, pk=pk)
+
+        # 2. Перевірка: заявка має належати користувачу
+        if request_obj.user != request.user:
+            raise PermissionDenied("Це не ваша заявка.")
+
+        # 3. Перевірка статусу
+        if request_obj.status != 'empty':
+            return Response(
+                {"detail": "Заявку вже відправлено або обробляється."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 4. Зміна статусу
+        request_obj.status = 'pending'
+        request_obj.save()
+
+        # 5. Надсилання email менеджеру
+        managers = User.objects.filter(role='manager')
+        for manager in managers:
+            send_status_email(
+                to_email=manager.email,
+                subject="Нова заявка на перевірку",
+                message=f"Нова заявка на перевірку: {request_obj.code} — {request_obj.name}"
+            )
+
+        # 6. Повернення відповіді
+        return Response(
+            {"detail": "Заявку відправлено на перевірку"},
+            status=status.HTTP_200_OK
+        )
 
 class UserProfileView(RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
