@@ -1,12 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import ListAPIView, get_object_or_404, CreateAPIView, DestroyAPIView
 from core.serializers import RequestCreateSerializer, RequestDetailSerializer, LoginSerializer, VerifyCodeSerializer, \
     RegisterSerializer, RequestImageSerializer, UserProfileSerializer
 from core.models import Request, RequestImage, User
-from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager
+from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager, IsOwner
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
@@ -124,7 +124,7 @@ class RequestListView(ListAPIView):
                 qs = qs.filter(Q(name__icontains=query) | Q(code__icontains=query))
 
             # Фільтр по статусу
-            if status:
+            if status_param:
                 qs = qs.filter(status=status_param)
 
             # Фільтр по типу заявки
@@ -134,26 +134,29 @@ class RequestListView(ListAPIView):
             return qs
 
         # Менеджер бачить усі заявки, крім чернеток і відхилених
-        queryset = Request.objects.exclude(status__in=["empty", "rejected"])
+        elif user.role == "manager":
+            qs = Request.objects.exclude(status__in=["empty", "rejected"])
 
-        # Параметри фільтрації
-        query = self.request.query_params.get("query")
-        type_request = self.request.query_params.get("type_request")
-        status_param = self.request.query_params.get("status")
+            # Параметри фільтрації
+            query = self.request.query_params.get("query")
+            status_param = self.request.query_params.get("status")
+            type_request = self.request.query_params.get("type_request")
 
-        # Пошук за назвою або кодом
-        if query:
-            queryset = queryset.filter(Q(name__icontains=query) | Q(code__icontains=query))
 
-        # Фільтр по типу заявки
-        if type_request:
-            queryset = queryset.filter(type_request=type_request)
+         # Пошук за назвою або кодом
+            if query:
+                qs = qs.filter(Q(name__icontains=query) | Q(code__icontains=query))
 
-        # Фільтр по статусу
-        if status_param:
-            queryset = queryset.filter(status=status_param)
+            if status_param:
+                qs = qs.filter(status=status_param)
 
-        return queryset
+            if type_request:
+                qs = qs.filter(type_request=type_request)
+
+            return qs
+
+        # Якщо роль невідома або інша — повернути пустий список
+        return Request.objects.none()
 
     def get_serializer_context(self):
         return {'request': self.request}
@@ -184,7 +187,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
             ]
             updating_master = any(field in validated_data for field in master_fields)
 
-            #  Призначення майстра → статус on_check + email
+            # Призначення майстра → статус on_check + email
             if updating_master:
                 if instance.status != 'approved':
                     raise PermissionDenied("Призначати майстра можна лише в статусі 'approved'.")
@@ -199,7 +202,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 )
                 return
 
-            #  Завершення заявки
+            # Завершення заявки
             if validated_data.get("status") == "done":
                 can_complete, reason = can_set_done(instance)
                 if not can_complete:
@@ -215,9 +218,9 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 serializer.save()
                 return
 
-            #  Відхилення
+            # Відхилення
             if validated_data.get("status") == "rejected":
-                reason = request.data.get("reason", "не вказана")  # отримаємо причину з запиту
+                reason = request.data.get("rejection_comment", "не вказана")  # отримаємо причину з запиту
                 message = (
                     f"Заявку №{instance.code} відхилено.\n"
                     f"Причина: {reason}."
@@ -228,7 +231,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                     message=message
                 )
 
-            #  Схвалення
+            # Схвалення
             if validated_data.get("status") == "approved":
                 msg = render_request_approved_message(instance)
                 send_status_email(
@@ -237,7 +240,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                     message=msg
                 )
 
-            #  Відновлення з done → approved
+            # Відновлення з done → approved
             old_status = instance.status
             new_status = validated_data.get("status")
             if old_status == "done" and new_status == "approved":
@@ -260,11 +263,7 @@ class RequestUpdateView(RetrieveUpdateAPIView):
         if instance.user != user:
             raise PermissionDenied("Це не ваша заявка.")
 
-        #  Редагування дозволене лише в статусах чернетки
-        if instance.status not in ['empty', 'pending']:
-            raise PermissionDenied("Редагувати можна лише в статусі 'empty' або 'pending'.")
-
-        #  Заборонені поля для редагування користувачем
+        # Заборонені поля для редагування користувачем
         forbidden_fields = [
             'assigned_master_name',
             'assigned_master_company',
@@ -277,27 +276,43 @@ class RequestUpdateView(RetrieveUpdateAPIView):
             if field in validated_data:
                 raise PermissionDenied(f"Недозволено змінювати поле {field}.")
 
-        #  Підтвердження користувачем (у статусі on_check)
-        if validated_data.get('user_confirmed') is True:
-            if instance.status == 'on_check':
-                if instance.work_date and timezone.now() < instance.work_date:
-                    raise PermissionDenied("Підтвердження можливе лише після завершення запланованого часу візиту.")
-
-                instance.user_confirmed = True
-                instance.save()
-
-                msg = render_user_confirmed_message(instance)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявка підтверджена користувачем",
-                    message=msg
-                )
-                return
-            else:
-                raise PermissionDenied("Підтвердити можна лише в статусі 'on_check'.")
+        # Редагування дозволене лише в статусах чернетки
+        if instance.status == 'rejected':
+            validated_data['status'] = 'empty'  # Автоматичне повернення у чернетку
+        elif instance.status not in ['empty']:
+            raise PermissionDenied("Редагувати можна лише в статусі 'empty' після відхилення ('rejected').")
 
         serializer.save()
 
+
+class ConfirmRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        instance = get_object_or_404(Request, pk=pk)
+
+        # Перевірка доступу
+        if instance.user != request.user:
+            raise PermissionDenied("Це не ваша заявка.")
+
+        if instance.status != 'on_check':
+            raise PermissionDenied("Підтвердити можна лише в статусі 'on_check'.")
+
+        if instance.work_date and timezone.now() < instance.work_date:
+            raise PermissionDenied("Підтвердження можливе лише після завершення запланованого часу візиту.")
+
+        # Підтвердження
+        instance.user_confirmed = True
+        instance.save()
+        # Повідомлення
+        msg = render_user_confirmed_message(instance)
+        send_status_email(
+            to_email=instance.user.email,
+            subject="Заявка підтверджена користувачем",
+            message=msg
+        )
+
+        return Response({"message": "Заявку підтверджено"}, status=200)
 
 class RequestImageListAPIView(ListAPIView):
     serializer_class = RequestImageSerializer
@@ -331,21 +346,35 @@ class RequestImageUploadAPIView(CreateAPIView):
         if RequestImage.objects.filter(request=req).count() >= 5:
             return Response({"error": "Можна додати максимум 5 зображень до заявки."}, status=400)
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save(request=req)
-        return Response(serializer.data, status=201)
+        files = request.FILES.getlist('image')
+
+        if not files:
+            return Response({"error": "Не передано файлів."}, status=400)
+
+        if len(files) + RequestImage.objects.filter(request=req).count() > 5:
+            return Response({"error": "Можна завантажити максимум 5 зображень до заявки."}, status=400)
+
+        created = []
+
+        for file in files:
+            serializer = self.get_serializer(data={'image': file})
+            serializer.is_valid(raise_exception=True)
+            serializer.save(request=req)
+            created.append(serializer.data)
+
+        return Response(created, status=201)
 
 
 class RequestImageDeleteAPIView(DestroyAPIView):
     queryset = RequestImage.objects.all()
     serializer_class = RequestImageSerializer
-    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+    permission_classes = [IsAuthenticated, IsOwner]  # менеджеру заборонено
 
     def get_object(self):
         obj = super().get_object()
-        self.check_object_permissions(self.request, obj.request)
+        self.check_object_permissions(self.request, obj)
         return obj
+
 
 class SubmitRequestView(APIView):
     permission_classes = [IsAuthenticated]
@@ -364,6 +393,14 @@ class SubmitRequestView(APIView):
                 {"detail": "Заявку вже відправлено або обробляється."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # 3.1 Перевірка опису
+        if not request_obj.description or request_obj.description.strip() == "":
+            return Response({"error": "Поле 'Опис' є обов'язковим для відправки заявки."}, status=400)
+
+        # 3.2 Перевірка зображень
+        if not request_obj.images.exists():
+            return Response({"error": "Необхідно додати хоча б одне зображення до заявки."}, status=400)
 
         # 4. Зміна статусу
         request_obj.status = 'pending'
@@ -397,11 +434,8 @@ class LogoutView(APIView):
     def post(self, request):
         user = request.user
 
-        # Деактивація акаунта
-        user.is_active = False
-        user.save()
+        # Якщо використовуєш TokenAuthentication
+        if hasattr(user, 'auth_token'):
+            user.auth_token.delete()
 
-        # Видалення токена
-        user.auth_token.delete()
-
-        return Response({"message": "Користувача деактивовано та токен видалено."}, status=status.HTTP_200_OK)
+        return Response({"message": "Ви вийшли з системи"}, status=status.HTTP_200_OK)

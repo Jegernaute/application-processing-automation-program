@@ -28,10 +28,11 @@ def render_request_approved_message(request_obj):
 def render_master_assigned_message(request_obj):
     return (
         f"Майстра призначено для заявки №{request_obj.code}.\n"
-        f"Дата візиту: {request_obj.work_date.strftime('%d.%m %H:%M')}\n"
-        f"Ім’я майстра: {request_obj.master_name}\n"
-        f"Телефон: {request_obj.master_phone}"
+        f"Дата візиту: {request_obj.work_date.strftime('%d.%m %H:%M') if request_obj.work_date else 'не вказана'}\n"
+        f"Ім’я майстра: {request_obj.assigned_master_name or 'не вказано'}\n"
+        f"Телефон: {request_obj.assigned_master_phone or 'не вказано'}"
     )
+
 def render_user_confirmed_message(request_obj):
     return (
         f"Користувач підтвердив, що заявка №{request_obj.code} виконана.\n"

@@ -98,7 +98,7 @@ class Request(models.Model):
     type_request = models.CharField(max_length=50, choices=TYPE_CHOICES)  # Тип заявки
     description = models.TextField()  # Детальний опис проблеми
     location_unit = models.ForeignKey('LocationUnit', on_delete=models.CASCADE, null=False)
-    room_number = models.CharField(max_length=20, null=True)
+    room_number = models.CharField(max_length=20, null=False, blank=False)
     entrance_number = models.CharField(max_length=10, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)  # Дата створення
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='empty')# Статус

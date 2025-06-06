@@ -325,6 +325,7 @@ class RequestDetailSerializer(serializers.ModelSerializer):
     assigned_company_phone = serializers.CharField(required=False)
     work_date = serializers.DateTimeField(required=False)
 
+
     class Meta:
         model = Request
         fields = [
@@ -347,6 +348,12 @@ class RequestDetailSerializer(serializers.ModelSerializer):
             'entrance_number',
             'user_confirmed',
         ]
+
+    def validate_status(self, value):
+        if self.instance and self.context['request'].user.role in ['student', 'lecturer']:
+            if value not in ['empty', 'pending']:
+                raise serializers.ValidationError("Ви не можете змінювати статус вручну.")
+        return value
 
     def get_assigned_master(self, obj):
         user = self.context['request'].user
