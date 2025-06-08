@@ -2,12 +2,14 @@ import os
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from core.models import StudentCode, LecturerCode, ManagerCode, Request, RequestImage,LocationUnit
+from core.models import StudentCode, LecturerCode, ManagerCode, Request, RequestImage, LocationUnit, RequestAuditLog
 from django.core.mail import send_mail
 from rest_framework.authtoken.models import Token
 import uuid
 import re
 import random
+from core.validators.phone import normalize_phone
+
 
 # Отримуємо кастомну модель користувача
 User = get_user_model()
@@ -168,33 +170,7 @@ class RegisterSerializer(serializers.Serializer):
 
 
 
-#  ФУНКЦІЯ НОРМАЛІЗАЦІЇ НОМЕРА ТЕЛЕФОНУ
-def normalize_phone(phone: str) -> str:
-    # Видаляє всі символи, крім цифр і плюса ("+")
-    phone = re.sub(r"[^\d+]", "", phone)
 
-    # Якщо номер починається з "0", замінюємо на "+380"
-    if phone.startswith("0"):
-        phone = "+380" + phone[1:]
-    # Якщо номер починається з "380", додаємо "+"
-    elif phone.startswith("380"):
-        phone = "+" + phone
-    # Якщо вже правильний формат — нічого не змінюємо
-    elif phone.startswith("+380"):
-        pass
-    # Усі інші варіанти — помилка
-    else:
-        raise serializers.ValidationError({
-            "phone": "Невірний формат телефону. Має бути у форматі +380XXXXXXXXX"
-        })
-
-    # Перевіряємо, що результат повністю відповідає шаблону +380XXXXXXXXX
-    if not re.fullmatch(r"\+380\d{9}", phone):
-        raise serializers.ValidationError({
-            "phone": "Номер телефону має бути у форматі +380XXXXXXXXX"
-        })
-
-    return phone
 
 
 #  СЕРІАЛІЗАТОР ДЛЯ ЛОГІНУ КОРИСТУВАЧА (ПО EMAIL І КОДУ)
@@ -422,5 +398,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Користувач із таким номером телефону вже існує.")
         return value
 
+class RequestAuditLogSerializer(serializers.ModelSerializer):
+    changed_by_email = serializers.CharField(source='changed_by.email', read_only=True)
+
+    class Meta:
+        model = RequestAuditLog
+        fields = ['field', 'old_value', 'new_value', 'timestamp', 'changed_by_email']
 
 

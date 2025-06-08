@@ -4,7 +4,7 @@ from rest_framework import status, serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.generics import ListAPIView, get_object_or_404, CreateAPIView, DestroyAPIView
 from core.serializers import RequestCreateSerializer, RequestDetailSerializer, LoginSerializer, VerifyCodeSerializer, \
-    RegisterSerializer, RequestImageSerializer, UserProfileSerializer
+    RegisterSerializer, RequestImageSerializer, UserProfileSerializer, RequestAuditLogSerializer
 from core.models import Request, RequestImage, User
 from core.permissions import IsStudentOrLecturer, IsManager, IsOwnerOrManager, IsOwner
 from rest_framework.generics import RetrieveUpdateAPIView
@@ -13,12 +13,18 @@ from django.utils import timezone
 from core.services.request_status import can_set_done
 from core.services.notifications import (
     send_status_email,
+    create_notification,
+)
+from core.services.messages import (
     render_request_completed_message,
     render_request_rejected_message,
     render_request_approved_message,
-    render_request_restored_message, render_master_assigned_message, render_user_confirmed_message
+    render_master_assigned_message,
+    render_user_confirmed_message,
+    render_request_restored_message,
 )
 from django.db.models import Q
+from core.services.audit import log_change
 
 
 
@@ -174,6 +180,8 @@ class RequestUpdateView(RetrieveUpdateAPIView):
         instance = self.get_object()
         validated_data = serializer.validated_data
 
+        old_status = instance.status  # фіксуємо старий статус для логів
+
         # -------------------------
         #  Менеджер
         # -------------------------
@@ -192,14 +200,20 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                 if instance.status != 'approved':
                     raise PermissionDenied("Призначати майстра можна лише в статусі 'approved'.")
                 validated_data['status'] = 'on_check'
+                for field in master_fields:
+                    if field in validated_data:
+                        old_value = getattr(instance, field)
+                        new_value = validated_data[field]
+                        if old_value != new_value:
+                            log_change(instance, user, field, old_value, new_value)
+
+                log_change(instance, user, "status", old_status, "on_check")
                 serializer.save()
 
                 msg = render_master_assigned_message(instance)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Майстра призначено",
-                    message=msg
-                )
+                send_status_email(instance.user.email, "Майстра призначено", msg)
+                create_notification(instance.user, "Майстра призначено", msg)
+
                 return
 
             # Завершення заявки
@@ -209,47 +223,43 @@ class RequestUpdateView(RetrieveUpdateAPIView):
                     raise PermissionDenied(reason)
 
                 validated_data['completed_at'] = timezone.now()
+                log_change(instance, user, "status", old_status, "done")
+
                 msg = render_request_completed_message(instance, manager_email=user.email)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявка завершена",
-                    message=msg
-                )
+                send_status_email(instance.user.email, "Заявка виконана", msg)
+                create_notification(instance.user, "Заявка виконана", msg)
                 serializer.save()
                 return
 
-            # Відхилення
+            # Відхилення заявки
             if validated_data.get("status") == "rejected":
-                reason = request.data.get("rejection_comment", "не вказана")  # отримаємо причину з запиту
-                message = (
-                    f"Заявку №{instance.code} відхилено.\n"
-                    f"Причина: {reason}."
-                )
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявку відхилено",
-                    message=message
-                )
+                reason = request.data.get("rejection_comment", "не вказана")
 
-            # Схвалення
+                log_change(instance, user, "status", old_status, "rejected")
+                log_change(instance, user, "rejection_comment", instance.rejection_comment, reason)
+
+                msg = f"Заявку №{instance.code} відхилено.\nПричина: {reason}."
+                send_status_email(instance.user.email, "Заявку відхилено", msg)
+                create_notification(instance.user, "Заявку відхилено", msg)
+                serializer.save()
+                return
+
+            # Схвалення заявки
             if validated_data.get("status") == "approved":
-                msg = render_request_approved_message(instance)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявка схвалена",
-                    message=msg
-                )
+                log_change(instance, user, "status", old_status, "approved")
 
-            # Відновлення з done → approved
-            old_status = instance.status
+                msg = render_request_approved_message(instance)
+                send_status_email(instance.user.email, "Заявка схвалена", msg)
+                create_notification(instance.user, "Заявка схвалена", msg)
+
+            # Відновлення з "done" → "approved"
             new_status = validated_data.get("status")
             if old_status == "done" and new_status == "approved":
+                log_change(instance, user, "status", old_status, new_status)
+
                 msg = render_request_restored_message(instance)
-                send_status_email(
-                    to_email=instance.user.email,
-                    subject="Заявку відновлено",
-                    message=msg
-                )
+                send_status_email(instance.user.email, "Заявку відновлено", msg)
+                create_notification(instance.user, "Заявку відновлено", msg)
 
             serializer.save()
             return
@@ -302,8 +312,11 @@ class ConfirmRequestView(APIView):
             raise PermissionDenied("Підтвердження можливе лише після завершення запланованого часу візиту.")
 
         # Підтвердження
+        old_value = instance.user_confirmed
         instance.user_confirmed = True
         instance.save()
+        log_change(instance, request.user, "user_confirmed", old_value, True)
+
         # Повідомлення
         msg = render_user_confirmed_message(instance)
         send_status_email(
@@ -439,3 +452,13 @@ class LogoutView(APIView):
             user.auth_token.delete()
 
         return Response({"message": "Ви вийшли з системи"}, status=status.HTTP_200_OK)
+
+class RequestAuditLogListView(ListAPIView):
+    serializer_class = RequestAuditLogSerializer
+    permission_classes = [IsAuthenticated, IsOwnerOrManager]
+
+    def get_queryset(self):
+        request_id = self.kwargs['pk']
+        request_obj = get_object_or_404(Request, pk=request_id)
+        self.check_object_permissions(self.request, request_obj)
+        return request_obj.audit_logs.order_by('-timestamp')

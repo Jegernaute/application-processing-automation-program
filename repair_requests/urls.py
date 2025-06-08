@@ -20,7 +20,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from core.views import RegisterAPIView, RequestCreateView, RequestListView, RequestUpdateView, RequestImageListAPIView, \
     RequestImageUploadAPIView, RequestImageDeleteAPIView, UserProfileView, LogoutView, SubmitRequestView, \
-    ConfirmRequestView
+    ConfirmRequestView, RequestAuditLogListView
 from core.views import VerifyCodeView
 from core.views import LoginUserView
 
@@ -41,6 +41,7 @@ urlpatterns = [
     path('api/profile/', UserProfileView.as_view(), name="user-profile"),
     path('api/logout/', LogoutView.as_view(), name='logout'),
     path('api/requests/<int:pk>/submit/', SubmitRequestView.as_view(), name='request-submit'),
+    path('api/requests/<int:pk>/history/', RequestAuditLogListView.as_view(), name='request-history'),
 
 ]
 

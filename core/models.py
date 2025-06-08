@@ -260,3 +260,13 @@ class LocationUnit(models.Model):
     def __str__(self):
         return f"{self.name} — {self.street_name} {self.building_number}"
 
+class RequestAuditLog(models.Model):
+    request = models.ForeignKey("Request", on_delete=models.CASCADE, related_name="audit_logs")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    field = models.CharField(max_length=100)
+    old_value = models.TextField(blank=True, null=True)
+    new_value = models.TextField(blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.timestamp} — {self.field}: {self.old_value} → {self.new_value}"
